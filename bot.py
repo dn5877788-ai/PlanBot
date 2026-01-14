@@ -162,8 +162,8 @@ async def add_plan(message: Message):
     data = load_data()
     user_key = get_user_key(user_id)
 
-    if user_key not in data:
-        data[user_key] = {"active_plans": [], "completed_plans": []}
+    if user_key not in 
+    data[user_key] = {"active_plans": [], "completed_plans": []}
 
     new_plan = {
         "text": text,
@@ -275,3 +275,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+Fix: complete 'if user_key not in data' syntax
