@@ -79,19 +79,16 @@ def cleanup_old_data():
     for user_key in list(data.keys()):
         user_data = data[user_key]
 
-        # Оставляем активные планы только текущего месяца
         active = user_data.get("active_plans", [])
         user_data["active_plans"] = [
             p for p in active if is_current_month(p.get("date_added", ""))
         ]
 
-        # Оставляем выполненные планы только текущего месяца
         completed = user_data.get("completed_plans", [])
         user_data["completed_plans"] = [
             p for p in completed if is_current_month(p.get("date_completed", ""))
         ]
 
-        # Удаляем пользователя, если ничего не осталось
         if not user_data["active_plans"] and not user_data["completed_plans"]:
             del data[user_key]
 
@@ -100,7 +97,6 @@ def cleanup_old_data():
 # ============ КОМАНДЫ ============
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    # Отвечаем только в теме "Планы"
     if not message.is_topic_message:
         return
     try:
@@ -119,14 +115,17 @@ async def cmd_start(message: Message):
         "❌ Удалить — просто сотрёт"
     )
 
-# ============ ОСНОВНОЙ ОБРАБОТЧИК ПЛАНОВ ============
+# ============ ОСНОВНОЙ ОБРАБОТЧИК ============
 @router.message()
 async def add_plan(message: Message):
-    # Игнорируем, если нет текста или это команда
-    if not message.text or message.text.startswith('/'):
+    # 🔥 ИСПРАВЛЕНО: безопасная проверка текста
+    if not message.text or not isinstance(message.text, str):
+        return  # Игнорируем не-текстовые сообщения
+
+    text = message.text.strip()
+    if not text or text.startswith('/'):
         return
 
-    # Игнорируем, если не в теме
     if not message.is_topic_message:
         return
 
@@ -134,7 +133,6 @@ async def add_plan(message: Message):
     if not thread_id:
         return
 
-    # Получаем название темы
     try:
         topic_info = await bot.get_forum_topic(
             chat_id=message.chat.id,
@@ -147,10 +145,6 @@ async def add_plan(message: Message):
 
     # --- Сохраняем план ---
     user_id = message.from_user.id
-    text = message.text.strip()
-    if not text:
-        return
-
     data = load_data()
     user_key = get_user_key(user_id)
 
@@ -180,26 +174,23 @@ async def add_plan(message: Message):
 # ============ ОБРАБОТКА КНОПОК ============
 @router.callback_query(lambda c: c.data.startswith("done_") or c.data.startswith("del_"))
 async def handle_action(callback: CallbackQuery):
-    # Поддержка только в теме "Планы"
-    if not callback.message.reply_to_message and not hasattr(callback.message, 'is_topic_message'):
-        # Если сообщение не в теме — игнорируем
-        await callback.answer("Бот работает только в теме «Планы».", show_alert=True)
+    if not callback.message or not hasattr(callback.message, 'chat'):
+        await callback.answer("Ошибка сообщения.", show_alert=True)
         return
 
-    # Определяем chat_id и thread_id
     chat_id = callback.message.chat.id
     thread_id = getattr(callback.message, 'message_thread_id', None)
     if not thread_id:
-        await callback.answer("Не в теме.", show_alert=True)
+        await callback.answer("Работает только в темах.", show_alert=True)
         return
 
     try:
         topic_info = await bot.get_forum_topic(chat_id=chat_id, message_thread_id=thread_id)
         if topic_info.name != "Планы":
-            await callback.answer("Работает только в теме «Планы».", show_alert=True)
+            await callback.answer("Только в теме «Планы».", show_alert=True)
             return
     except:
-        await callback.answer("Ошибка доступа к теме.", show_alert=True)
+        await callback.answer("Не удалось проверить тему.", show_alert=True)
         return
 
     user_id = callback.from_user.id
@@ -218,22 +209,24 @@ async def handle_action(callback: CallbackQuery):
             raise IndexError
         plan = active_plans.pop(index)
     except (ValueError, IndexError):
-        await callback.answer("План устарел или уже удалён.", show_alert=True)
-        await callback.message.delete()
+        await callback.answer("План устарел.", show_alert=True)
+        try:
+            await callback.message.delete()
+        except:
+            pass
         return
 
     if action == "done":
         plan["date_completed"] = str(date.today())
         data[user_key].setdefault("completed_plans", []).append(plan)
         await callback.message.edit_text("✅ Выполнено! Сохранено в отчёт.")
-
     elif action == "del":
         await callback.message.edit_text("❌ Удалено.")
 
     save_data(data)
     await callback.answer()
 
-# ============ ЭНДПОИНТ ДЛЯ ОЧИСТКИ ============
+# ============ ЭНДПОИНТ ОЧИСТКИ ============
 async def trigger_cleanup(request):
     today = date.today()
     if today.day == 1:
@@ -244,12 +237,13 @@ async def trigger_cleanup(request):
         return web.Response(text=f"✅ Экспорт {prev_year}-{prev_month:02d}.xlsx и очистка завершены.")
     else:
         cleanup_old_data()
-        return web.Response(text="🧹 Очистка старых данных (не первый день месяца).")
+        return web.Response(text="🧹 Очистка старых данных.")
 
-# ============ WEBHOOK И ЗАПУСК ============
+# ============ ЗАПУСК ============
 async def on_startup(app):
-    # Webhook URL формируется автоматически через Render
-    webhook_url = f"https://{request.headers.get('Host')}{WEBHOOK_PATH}" if 'request' in locals() else f"https://planbot-vjeu.onrender.com{WEBHOOK_PATH}"
+    # Render даёт правильный Host автоматически
+    host = os.getenv("RENDER_EXTERNAL_URL", "https://planbot-vjeu.onrender.com")
+    webhook_url = f"{host}{WEBHOOK_PATH}"
     await bot.set_webhook(webhook_url)
 
 def main():
