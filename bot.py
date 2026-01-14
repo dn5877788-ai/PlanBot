@@ -30,13 +30,19 @@ router = Router()
 # ============ ФУНКЦИИ РАБОТЫ С ДАННЫМИ ============
 def load_data():
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            return {}
     return {}
 
 def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except IOError:
+        pass
 
 def get_user_key(user_id):
     return f"user_{user_id}"
@@ -46,31 +52,34 @@ def is_current_month(d: str) -> bool:
         plan_date = datetime.strptime(d, "%Y-%m-%d").date()
         today = date.today()
         return plan_date.year == today.year and plan_date.month == today.month
-    except:
+    except (ValueError, TypeError):
         return False
 
 def export_month_to_excel(year: int, month: int):
     data = load_data()
     filename = REPORTS_DIR / f"{year}-{month:02d}.xlsx"
     
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = f"{year}-{month:02d}"
-    ws.append(["Дата выполнения", "Пользователь ID", "План"])
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = f"{year}-{month:02d}"
+        ws.append(["Дата выполнения", "Пользователь ID", "План"])
 
-    for user_key, user_data in data.items():
-        completed_list = user_data.get("completed_plans", [])
-        for item in completed_list:
-            comp_date_str = item.get("date_completed", "")
-            try:
-                comp_date = datetime.strptime(comp_date_str, "%Y-%m-%d").date()
-                if comp_date.year == year and comp_date.month == month:
-                    ws.append([comp_date_str, user_key, item["text"]])
-            except:
-                continue
+        for user_key, user_data in data.items():
+            completed_list = user_data.get("completed_plans", [])
+            for item in completed_list:
+                comp_date_str = item.get("date_completed", "")
+                try:
+                    comp_date = datetime.strptime(comp_date_str, "%Y-%m-%d").date()
+                    if comp_date.year == year and comp_date.month == month:
+                        ws.append([comp_date_str, user_key, item["text"]])
+                except (ValueError, TypeError):
+                    continue
 
-    wb.save(filename)
-    return filename
+        wb.save(filename)
+        return filename
+    except Exception:
+        return None
 
 def cleanup_old_data():
     data = load_data()
@@ -97,16 +106,21 @@ def cleanup_old_data():
 # ============ КОМАНДЫ ============
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    if not message.is_topic_message:
+    if not hasattr(message, 'is_topic_message') or not message.is_topic_message:
         return
+    
     try:
+        thread_id = message.message_thread_id
+        if not thread_id:
+            return
+            
         topic = await bot.get_forum_topic(
             chat_id=message.chat.id,
-            message_thread_id=message.message_thread_id
+            message_thread_id=thread_id
         )
         if topic.name != "Планы":
             return
-    except:
+    except Exception:
         return
 
     await message.answer(
@@ -119,17 +133,17 @@ async def cmd_start(message: Message):
 @router.message()
 async def add_plan(message: Message):
     # Защита от не-текстовых сообщений
-    if not message.text or not isinstance(message.text, str):
+    if not hasattr(message, 'text') or not message.text or not isinstance(message.text, str):
         return
 
     text = message.text.strip()
     if not text or text.startswith('/'):
         return
 
-    if not message.is_topic_message:
+    if not hasattr(message, 'is_topic_message') or not message.is_topic_message:
         return
 
-    thread_id = message.message_thread_id
+    thread_id = getattr(message, 'message_thread_id', None)
     if not thread_id:
         return
 
@@ -148,7 +162,7 @@ async def add_plan(message: Message):
     data = load_data()
     user_key = get_user_key(user_id)
 
-    if user_key not in 
+    if user_key not in data:
         data[user_key] = {"active_plans": [], "completed_plans": []}
 
     new_plan = {
@@ -172,7 +186,7 @@ async def add_plan(message: Message):
     )
 
 # ============ ОБРАБОТКА КНОПОК ============
-@router.callback_query(lambda c: c.data.startswith("done_") or c.data.startswith("del_"))
+@router.callback_query(lambda c: c.data and (c.data.startswith("done_") or c.data.startswith("del_")))
 async def handle_action(callback: CallbackQuery):
     if not callback.message or not hasattr(callback.message, 'chat'):
         await callback.answer("Ошибка сообщения.", show_alert=True)
@@ -189,7 +203,7 @@ async def handle_action(callback: CallbackQuery):
         if topic_info.name != "Планы":
             await callback.answer("Только в теме «Планы».", show_alert=True)
             return
-    except:
+    except Exception:
         await callback.answer("Не удалось проверить тему.", show_alert=True)
         return
 
@@ -197,7 +211,7 @@ async def handle_action(callback: CallbackQuery):
     user_key = get_user_key(user_id)
     data = load_data()
 
-    if user_key not in 
+    if user_key not in data:
         await callback.answer("Нет активных планов.", show_alert=True)
         return
 
@@ -208,17 +222,19 @@ async def handle_action(callback: CallbackQuery):
         if index < 0 or index >= len(active_plans):
             raise IndexError
         plan = active_plans.pop(index)
-    except (ValueError, IndexError):
+    except (ValueError, IndexError, KeyError):
         await callback.answer("План устарел.", show_alert=True)
         try:
             await callback.message.delete()
-        except:
+        except Exception:
             pass
         return
 
     if action == "done":
         plan["date_completed"] = str(date.today())
-        data[user_key].setdefault("completed_plans", []).append(plan)
+        if "completed_plans" not in data[user_key]:
+            data[user_key]["completed_plans"] = []
+        data[user_key]["completed_plans"].append(plan)
         await callback.message.edit_text("✅ Выполнено! Сохранено в отчёт.")
     elif action == "del":
         await callback.message.edit_text("❌ Удалено.")
@@ -243,7 +259,10 @@ async def trigger_cleanup(request):
 async def on_startup(app):
     host = os.getenv("RENDER_EXTERNAL_URL", "https://planbot-vjeu.onrender.com")
     webhook_url = f"{host}{WEBHOOK_PATH}"
-    await bot.set_webhook(webhook_url)
+    try:
+        await bot.set_webhook(webhook_url)
+    except Exception as e:
+        print(f"Ошибка установки webhook: {e}")
 
 def main():
     dp.include_router(router)
