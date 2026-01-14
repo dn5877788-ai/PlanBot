@@ -118,9 +118,9 @@ async def cmd_start(message: Message):
 # ============ ОСНОВНОЙ ОБРАБОТЧИК ============
 @router.message()
 async def add_plan(message: Message):
-    # 🔥 ИСПРАВЛЕНО: безопасная проверка текста
+    # Защита от не-текстовых сообщений
     if not message.text or not isinstance(message.text, str):
-        return  # Игнорируем не-текстовые сообщения
+        return
 
     text = message.text.strip()
     if not text or text.startswith('/'):
@@ -241,7 +241,6 @@ async def trigger_cleanup(request):
 
 # ============ ЗАПУСК ============
 async def on_startup(app):
-    # Render даёт правильный Host автоматически
     host = os.getenv("RENDER_EXTERNAL_URL", "https://planbot-vjeu.onrender.com")
     webhook_url = f"{host}{WEBHOOK_PATH}"
     await bot.set_webhook(webhook_url)
