@@ -1,6 +1,4 @@
 import os
-import json
-from datetime import date
 from aiogram import Bot, Dispatcher, Router
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import Command
@@ -18,62 +16,56 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 
-# ============ ФУНКЦИИ РАБОТЫ С ДАННЫМИ ============
-def load_data():
-    if os.path.exists("data.json"):
-        try:
-            with open("data.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
-
-def save_data(data):
-    with open("data.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
 # ============ КОМАНДЫ ============
 @router.message(Command("start"))
 async def cmd_start(message: Message):
-    # Работаем только в теме "Планы"
+    # Проверяем, что сообщение в теме "Планы"
     if not hasattr(message, 'is_topic_message') or not message.is_topic_message:
         return
     
     try:
+        thread_id = getattr(message, 'message_thread_id', None)
+        if not thread_id:
+            return
+            
         topic = await bot.get_forum_topic(
             chat_id=message.chat.id,
-            message_thread_id=message.message_thread_id
+            message_thread_id=thread_id
         )
         if topic.name != "Планы":
             return
     except:
         return
         
-    await message.answer("Привет! Просто напиши свой план, и я добавлю его с кнопками.")
+    await message.answer("Привет! Напиши свой план, и я добавлю его с кнопками.\n\n✅ Выполнено\n❌ Удалить")
 
 # ============ ОСНОВНОЙ ОБРАБОТЧИК ============
 @router.message()
 async def add_plan(message: Message):
-    # Проверка, что сообщение в теме "Планы"
-    if not hasattr(message, 'is_topic_message') or not message.is_topic_message:
-        return
-    
-    try:
-        topic = await bot.get_forum_topic(
-            chat_id=message.chat.id,
-            message_thread_id=message.message_thread_id
-        )
-        if topic.name != "Планы":
-            return
-    except:
-        return
-
-    # Проверка, что сообщение содержит текст
+    # Защита от пустых сообщений
     if not message.text or not isinstance(message.text, str):
         return
         
     text = message.text.strip()
     if not text or text.startswith('/'):
+        return
+    
+    # Проверяем, что сообщение в теме "Планы"
+    if not hasattr(message, 'is_topic_message') or not message.is_topic_message:
+        return
+    
+    try:
+        thread_id = getattr(message, 'message_thread_id', None)
+        if not thread_id:
+            return
+            
+        topic = await bot.get_forum_topic(
+            chat_id=message.chat.id,
+            message_thread_id=thread_id
+        )
+        if topic.name != "Планы":
+            return
+    except:
         return
 
     # Создаем кнопки
@@ -90,15 +82,20 @@ async def add_plan(message: Message):
 # ============ ОБРАБОТКА КНОПОК ============
 @router.callback_query()
 async def handle_callback(callback: CallbackQuery):
-    # Проверка, что нажатие в теме "Планы"
+    # Проверяем, что нажатие в теме "Планы"
     if not hasattr(callback.message, 'is_topic_message') or not callback.message.is_topic_message:
         await callback.answer("Бот работает только в теме «Планы».", show_alert=True)
         return
     
     try:
+        thread_id = getattr(callback.message, 'message_thread_id', None)
+        if not thread_id:
+            await callback.answer("Бот работает только в темах.", show_alert=True)
+            return
+            
         topic = await bot.get_forum_topic(
             chat_id=callback.message.chat.id,
-            message_thread_id=callback.message.message_thread_id
+            message_thread_id=thread_id
         )
         if topic.name != "Планы":
             await callback.answer("Бот работает только в теме «Планы».", show_alert=True)
@@ -117,11 +114,8 @@ async def handle_callback(callback: CallbackQuery):
 
 # ============ ЗАПУСК ============
 async def on_startup(app):
-    try:
-        await bot.set_webhook(WEBHOOK_URL)
-        print(f"✅ Webhook успешно установлен: {WEBHOOK_URL}")
-    except Exception as e:
-        print(f"❌ Ошибка установки webhook: {e}")
+    # Этот код не нужен, так как мы устанавливаем webhook вручную
+    pass
 
 def main():
     dp.include_router(router)
